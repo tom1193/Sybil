@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import pydicom
 import torchio as tio
+import nibabel as nib
 
 from sybil.datasets.utils import order_slices, VOXEL_SPACING
 from sybil.utils.loading import get_sample_loader
@@ -17,6 +18,7 @@ class Meta(NamedTuple):
     manufacturer: str
     slice_positions: list
     voxel_spacing: torch.Tensor
+    file_type: str
 
 
 class Label(NamedTuple):
@@ -33,7 +35,7 @@ class Serie:
         voxel_spacing: Optional[List[float]] = None,
         label: Optional[int] = None,
         censor_time: Optional[int] = None,
-        file_type: Literal["png", "dicom"] = "dicom",
+        file_type: Literal["png", "dicom", "nifti"] = "dicom",
         split: Literal["train", "dev", "test"] = "test",
     ):
         """Initialize a Serie.
@@ -132,11 +134,14 @@ class Serie:
         sample = {"seed": np.random.randint(0, 2**32 - 1)}
 
         input_dicts = [self._loader.get_image(path, sample) for path in self._meta.paths]
-        
-        x = torch.cat( [i["input"].unsqueeze(0) for i in input_dicts], dim = 0)
-        
-        # Convert from (T, C, H, W) to (C, T, H, W)
-        x = x.permute(1, 0, 2, 3)
+
+        if self._meta.file_type == "nifti":
+            x = input_dicts[0]["input"].permute(0, 3, 1, 2)
+        else:
+            x = torch.cat( [i["input"].unsqueeze(0) for i in input_dicts], dim = 0)
+
+            # Convert from (T, C, H, W) to (C, T, H, W)
+            x = x.permute(1, 0, 2, 3)
 
         x = tio.ScalarImage(
             affine=torch.diag(self._meta.voxel_spacing),
@@ -192,6 +197,15 @@ class Serie:
                 torch.tensor(voxel_spacing + [1]) if voxel_spacing is not None else None
             )
 
+        elif file_type == 'nifti':
+            nii = nib.load(paths[0])
+            voxel_spacing = torch.tensor(list(nii.header.get_zooms()) + [1])
+            processed_paths = paths
+            slice_positions = []
+            thickness = voxel_spacing[2]
+            pixel_spacing = voxel_spacing[:2]
+            manufacturer = None
+
         meta = Meta(
             paths=processed_paths,
             thickness=thickness,
@@ -199,6 +213,7 @@ class Serie:
             manufacturer=manufacturer,
             slice_positions=slice_positions,
             voxel_spacing=voxel_spacing,
+            file_type=file_type,
         )
         return meta
 

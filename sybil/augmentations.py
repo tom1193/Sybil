@@ -6,6 +6,7 @@ from typing import Literal
 from abc import ABCMeta, abstractmethod
 import numpy as np
 import random
+import torchio as tio
 
 
 def get_augmentations(split: Literal["train", "dev", "test"], args):
@@ -14,15 +15,15 @@ def get_augmentations(split: Literal["train", "dev", "test"], args):
             Scale_2d(args, {}),
             Rotate_Range(args, {"deg": 20}),
             ToTensor(),
-            Force_Num_Chan_Tensor_2d(args, {}),
-            Normalize_Tensor_2d(args, {}),
+            Force_Num_Chan_Tensor_3d(args, {}) if args.img_file_type == "nifti" else Force_Num_Chan_Tensor_2d(args, {}),
+            Normalize_Tensor_3d(args, {}) if args.img_file_type == "nifti" else Normalize_Tensor_2d(args, {}),
         ]
     else:
         augmentations = [
             Scale_2d(args, {}),
             ToTensor(),
-            Force_Num_Chan_Tensor_2d(args, {}),
-            Normalize_Tensor_2d(args, {}),
+            Force_Num_Chan_Tensor_3d(args, {}) if args.img_file_type=="nifti" else Force_Num_Chan_Tensor_2d(args, {}),
+            Normalize_Tensor_3d(args, {}) if args.img_file_type == "nifti" else Normalize_Tensor_2d(args, {}),
         ]
 
     return augmentations
@@ -184,6 +185,30 @@ class Normalize_Tensor_2d(Abstract_augmentation):
 
         return input_dict
 
+class Normalize_Tensor_3d(Abstract_augmentation):
+    """
+    Normalizes input by channel
+    wrapper for torchvision.transforms.Normalize wrapper.
+    """
+
+    def __init__(self, args, kwargs):
+        super(Normalize_Tensor_3d, self).__init__()
+        assert len(kwargs) == 0
+        self.channel_means = args.img_mean[0] if len(args.img_mean) == 1 else args.img_mean
+        self.channel_stds = args.img_std[0] if len(args.img_std) == 1 else args.img_std
+
+    def transform(self, img):
+        return img.sub(self.channel_means).div(self.channel_stds)
+
+    def __call__(self, input_dict, sample=None):
+        img = input_dict["input"]
+        if len(img.size()) == 3:
+            img = img.unsqueeze(0)
+
+        else:
+            input_dict["input"] = self.transform(img)
+
+        return input_dict
 
 class Force_Num_Chan_Tensor_2d(Abstract_augmentation):
     """
@@ -203,6 +228,31 @@ class Force_Num_Chan_Tensor_2d(Abstract_augmentation):
 
         num_dims = len(img.shape)
         if num_dims == 2:
+            img = img.unsqueeze(0)
+        existing_chan = img.size()[0]
+        if not existing_chan == self.args.num_chan:
+            input_dict["input"] = img.expand(self.args.num_chan, *img.size()[1:])
+
+        return input_dict
+
+class Force_Num_Chan_Tensor_3d(Abstract_augmentation):
+    """
+    Convert gray scale images to image with args.num_chan num channels.
+    """
+
+    def __init__(self, args, kwargs):
+        super(Force_Num_Chan_Tensor_3d, self).__init__()
+        assert len(kwargs) == 0
+        self.args = args
+
+    def __call__(self, input_dict, sample=None):
+        img = input_dict["input"]
+        mask = input_dict.get("mask", None)
+        if mask is not None:
+            input_dict["mask"] = mask.unsqueeze(0)
+
+        num_dims = len(img.shape)
+        if num_dims == 3:
             img = img.unsqueeze(0)
         existing_chan = img.size()[0]
         if not existing_chan == self.args.num_chan:

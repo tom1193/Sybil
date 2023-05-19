@@ -4,6 +4,7 @@ import torch
 import pydicom
 from pydicom.pixel_data_handlers.util import apply_modality_lut
 import numpy as np
+import nibabel as nib
 
 LOADING_ERROR = "LOADING ERROR! {}"
 
@@ -35,6 +36,27 @@ class DicomLoader(abstract_loader):
             arr = arr//256 # parity with images loaded as 8 bit
         except Exception:
             raise Exception(LOADING_ERROR.format("COULD NOT LOAD DICOM."))
+        return {"input": arr}
+
+    @property
+    def cached_extension(self):
+        return ""
+
+class NiftiLoader(abstract_loader):
+    def __init__(self, cache_path, augmentations, args):
+        super(NiftiLoader, self).__init__(cache_path, augmentations, args)
+        self.window_center = -600
+        self.window_width = 1500
+
+    def load_input(self, path, sample):
+        try:
+            nii = nib.load(path)
+            arr = nii.get_fdata()
+            arr = apply_windowing(arr, self.window_center, self.window_width)
+            arr = arr//256
+            assert len(arr.shape) == 3, f"Expected nifti to be 3d, instead got {arr.shape}"
+        except Exception:
+            raise Exception(LOADING_ERROR.format("COULD NOT LOAD NIFTI."))
         return {"input": arr}
 
     @property
