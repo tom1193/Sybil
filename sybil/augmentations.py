@@ -7,12 +7,14 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 import random
 import torchio as tio
+# pip install git+https://github.com/shuohan/resize.git
+from resize.scipy import resize as resize3d 
 
 
 def get_augmentations(split: Literal["train", "dev", "test"], args):
     if split == "train":
         augmentations = [
-            Scale_2d(args, {}),
+            Scale_3d(args, {}) if args.img_file_type == "nifti" else Scale_2d(args, {}),
             Rotate_Range(args, {"deg": 20}),
             ToTensor(),
             Force_Num_Chan_Tensor_3d(args, {}) if args.img_file_type == "nifti" else Force_Num_Chan_Tensor_2d(args, {}),
@@ -20,10 +22,10 @@ def get_augmentations(split: Literal["train", "dev", "test"], args):
         ]
     else:
         augmentations = [
-            Scale_2d(args, {}),
+            Scale_3d(args, {}) if args.img_file_type == "nifti" else Scale_2d(args, {}),
             ToTensor(),
             Force_Num_Chan_Tensor_3d(args, {}) if args.img_file_type=="nifti" else Force_Num_Chan_Tensor_2d(args, {}),
-            Normalize_Tensor_3d(args, {}) if args.img_file_type == "nifti" else Normalize_Tensor_2d(args, {}),
+            Normalize_Tensor_2d(args, {}),
         ]
 
     return augmentations
@@ -126,6 +128,31 @@ class Scale_2d(Abstract_augmentation):
         input_dict["mask"] = out["mask"]
         return input_dict
 
+class Scale_3d(Abstract_augmentation):
+    """
+    3D resize method from: Han, Shuo (2022). cerebellum parcellation from magnetic resonance imaging using deep learning. Section 5.3.5. [Doctoral, dissertation, Johns Hopkins University].
+    https://github.com/shuohan/resize
+    """
+
+    def __init__(self, args, kwargs):
+        super(Scale_3d, self).__init__()
+        assert len(kwargs.keys()) == 0
+        self.width, self.height = args.img_size
+        self.set_cachable(self.width, self.height)
+
+    def transform(self, image, mask):
+        image = resize3d(image, (image.shape[0]/self.width, image.shape[1]/self.height, 1), order=1) # linear interp
+        mask = resize3d(mask, (mask.shape[0]/self.width, mask.shape[1]/self.height, 1), order=0) if mask else None # nearest neighbor
+        return {"image": image, "mask": mask}
+
+    def __call__(self, input_dict, sample=None):
+        out = self.transform(
+            image=input_dict["input"], mask=input_dict.get("mask", None)
+        )
+        input_dict["input"] = out["image"]
+        input_dict["mask"] = out["mask"]
+        return input_dict
+
 
 class Rotate_Range(Abstract_augmentation):
     """
@@ -185,30 +212,6 @@ class Normalize_Tensor_2d(Abstract_augmentation):
 
         return input_dict
 
-class Normalize_Tensor_3d(Abstract_augmentation):
-    """
-    Normalizes input by channel
-    wrapper for torchvision.transforms.Normalize wrapper.
-    """
-
-    def __init__(self, args, kwargs):
-        super(Normalize_Tensor_3d, self).__init__()
-        assert len(kwargs) == 0
-        self.channel_means = args.img_mean[0] if len(args.img_mean) == 1 else args.img_mean
-        self.channel_stds = args.img_std[0] if len(args.img_std) == 1 else args.img_std
-
-    def transform(self, img):
-        return img.sub(self.channel_means).div(self.channel_stds)
-
-    def __call__(self, input_dict, sample=None):
-        img = input_dict["input"]
-        if len(img.size()) == 3:
-            img = img.unsqueeze(0)
-
-        else:
-            input_dict["input"] = self.transform(img)
-
-        return input_dict
 
 class Force_Num_Chan_Tensor_2d(Abstract_augmentation):
     """
