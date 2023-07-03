@@ -52,6 +52,7 @@ class NiftiLoader(abstract_loader):
         try:
             nii = nib.load(path)
             arr = nii.get_fdata()
+            arr = np.rot90(arr)
             arr = apply_windowing(arr, self.window_center, self.window_width)
             arr = arr//256
             assert len(arr.shape) == 3, f"Expected nifti to be 3d, instead got {arr.shape}"
